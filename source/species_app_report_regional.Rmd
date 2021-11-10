@@ -1,0 +1,414 @@
+---
+fontsize: 12pt
+output:
+  pdf_document: default
+params:
+  deploy_dat: NA
+  gmu_df: NA
+  reg_shp: NA
+  reg_text: NA
+  reg_title: NA
+  species_data: NA
+  species_p: NA
+  species_s: NA
+  species_title: NA
+---
+
+---
+title: "`r params$reg_title` `r params$species_title` Summary from Summer Wolf Cameras (2019)"
+author: "Idaho Dept. of Fish and Game"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+header-includes:
+  - \usepackage{titling}
+  - \pretitle{\begin{center}
+    \includegraphics[width=2in,height=2in]{idfglogo.png}\LARGE\\}
+  - \posttitle{\end{center}}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \rhead{`r params$reg_title` `r params$species_s` summary from summer wolf cameras (2019) \includegraphics[width = .05\textwidth]{idfglogo.png}}
+
+---
+
+``` {r setup, include = F}
+knitr::opts_chunk$set(echo = FALSE,  warning = F, fig.height=4, fig.width=8, fig.align = "center")
+
+# load libraries
+#library(tidyverse)
+#library(dplyr)
+#library(ggplot2)
+#library(scales)
+#library(chron)
+#library(lubridate)
+#library(forcats)
+#library(tinytex)
+#library(stringr)
+# to add a north arrow and a scale bar to the map
+#library(ggsn)
+# to have non-overlapping labels
+#library(ggrepel)
+
+# set factors to false
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_TIME", "English")
+```
+
+```{r data, include = F}
+# Species-specific data
+species_dat <- as.data.frame(params$species_data)
+species_singular <- params$species_s
+species_plural <- params$species_p
+
+# Exclude any photos pre-2019
+species_2019 <- species_dat %>%
+  mutate(Year = year(lubridate::dmy(as.character(Date))))%>%
+  mutate(posix_date_time = as.POSIXct(posix_date_time)) %>%
+  filter(Year >= 2019)
+
+deploy_dat <- as.data.frame(params$deploy_dat)
+reg_shp <- params$reg_shp
+gmu_df <- as.data.frame(params$gmu_df)
+
+```
+
+***
+  
+\subsection{About the Data}
+
+The following summary represents data collected in `r params$reg_text` during the summer 2019 wolf camera deployment. Several measures were taken to avoid biasing the summaries towards active individuals or common habitat types. To minimize double- or triple-counting individuals, data were binned into 10 minute intervals within each camera, and the maximum count for each 10 minute interval was extracted (e.g., if during one 10 minute interval at camera A a pair of `r species_plural` walked through the viewshed, triggering the camera 3 times--once with one `r species_singular`, once with two `r species_plural`, and once with one `r species_singular` in the photo--a count of "2" would be recorded for that time slot). For the map summary, the maximum counts within a given camera were summed over the entire study period to give a total count for each camera. For the month and time-of-day summaries, the maximum counts of all cameras were summed within each month and hour, respectively. To account for variation in environmental availability, the habitat and trail-type summaries were computed using presence/absence data, such that the response variable (y-axis) was the proportion of cameras in a given habitat/trail category that observed the species of interest at any point during the study period.
+
+    
+\newpage
+
+\section{Map of Observations}    
+Size of circle corresponds to number of individuals. Grey circles indicate camera locations with zero `r species_singular` sightings. Label identifies state (S) or focal (F) cell ID (only relevant for species that were observed at 25 or fewer cameras)
+  
+  
+```{r map data}
+# Summarize observations within 10 minute intervals
+species_10min_map <- species_2019 %>%
+        group_by(Pic_CamID, by10 = cut.POSIXt(posix_date_time, "10 min")) %>%
+        summarise(Max_Count = max(NearSp1Count, na.rm = T)) %>%
+  mutate(Count = ifelse(Max_Count == -Inf, 0, Max_Count))
+
+species_sum_map <- species_10min_map %>%
+  group_by(Pic_CamID) %>%
+  summarise(Count = sum(Count, na.rm = T))
+
+
+# MERGED DATA
+dat_map<-left_join(species_sum_map, deploy_dat, by = "Pic_CamID")
+
+# Subset to only cams in region
+deploy_spdf <- SpatialPointsDataFrame(coords = cbind(deploy_dat$long, deploy_dat$lat), 
+                               data = deploy_dat,
+                               proj4string = CRS("+proj=longlat +datum=WGS84"))
+
+deploy_select <- deploy_spdf[complete.cases(over(deploy_spdf, reg_shp)),]
+deploy_df <- as.data.frame(deploy_select)
+
+
+```
+
+```{r scale_function}
+# Create function for scaling point sizes
+seqlast <- function (from, to, by) 
+{
+  vec <- do.call(what = seq, args = list(from, to, by))
+  if ( tail(vec, 1) != to ) {
+    return(c(vec, to))
+  } else {
+    return(vec)
+  }
+}
+```
+
+```{r map, fig.height=8, fig.width = 8, fig.align = 'center'}
+xlim <- max(gmu_df$long)
+ylim <- min(gmu_df$lat)-0.25
+
+
+if(nrow(dat_map) <= 25){
+  p<-ggplot() +
+  geom_polygon(data = gmu_df, aes(x = long, y = lat, group = group),
+               fill = "paleturquoise", color = "paleturquoise4") +
+  geom_point(data = deploy_df, aes(x = long, y = lat),
+               shape = 21, fill = "darkgrey", color = "dimgrey", alpha = 0.8) +
+  geom_point(data = dat_map, aes(x = long, y = lat, size = Count),
+             shape = 21, fill = "peru", color = "tan4") +
+  ggrepel::geom_label_repel(data = dat_map, aes(x = long, y = lat, 
+                                   label = paste(state_or_focal,state_focal_cellid,sep = "_")),
+                   alpha = 0.6,
+                   hjust = 1, vjust = 1, nudge_x = -0.2)
+} else {
+  p<-ggplot() +
+  geom_polygon(data = gmu_df, aes(x = long, y = lat, group = group),
+               fill = "paleturquoise", color = "paleturquoise4") +
+  geom_point(data = deploy_df, aes(x = long, y = lat),
+               shape = 21, fill = "darkgrey", color = "dimgrey", alpha = 0.8) +
+  geom_point(data = dat_map, aes(x = long, y = lat, size = Count),
+             shape = 21, fill = "peru", color = "tan4")
+}
+
+if(nrow(dat_map)>2){
+  breaks_vec <- seqlast(from = signif(min(dat_map$Count[dat_map$Count>0], na.rm = T),1), 
+                      to = signif(max(dat_map$Count, na.rm = T),1), 
+                      by = signif(round(max(dat_map$Count, na.rm = T)/3,0),1))
+breaks_vec <- sapply(breaks_vec, function(x) signif(x, 1))
+breaks_vec <- unique(breaks_vec)
+} else {
+  breaks_vec <- c(signif(min(dat_map$Count[dat_map$Count>0], na.rm = T),1), 
+                  signif(max(dat_map$Count, na.rm = T),1))
+}
+
+p  +
+  scale_size_continuous(breaks = breaks_vec, 
+                        range = c(3,9)) +
+  labs(x = "", y = "") +
+  coord_quickmap() +
+  #north(gmu_df) +
+  #scalebar(gmu_df, dist = 50, dist_unit = "km",
+  #               transform = T, model = "WGS84", st.size = 3, height = 0.01,
+  #               anchor = c(x = xlim, y = ylim)) +
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank()) #+
+  #blank()  
+```
+ 
+\newpage
+
+# Observations by Month  
+Months outside observation window (June-October 2019) excluded  
+  
+  
+``` {r date_data}
+# Summarize observations within 10 minute intervals
+date_dat <- species_2019 %>%
+  mutate(Month = month(lubridate::dmy(as.character(Date)))) %>%
+  mutate(Month = month.abb[Month]) %>%
+  group_by(Month, Pic_CamID, by10 = cut.POSIXt(posix_date_time, "10 min")) %>%
+  summarise(Max_Count = max(NearSp1Count, na.rm = T)) %>%
+  mutate(Count = ifelse(Max_Count == -Inf, 0, Max_Count)) %>%
+  group_by(Month) %>%
+  summarise(Count = sum(Count, na.rm = T))
+
+for(i in 6:10){
+  if(!month.abb[i] %in% date_dat$Month){
+    date_dat <- add_row(date_dat, Month = month.abb[i], Count = 0)
+  }
+}
+        
+date_dat <- date_dat %>%
+  mutate(Month = factor(Month, levels = c("Jun","Jul","Aug","Sep","Oct"))) %>%
+  mutate(Month = forcats::fct_explicit_na(Month)) %>%
+  filter(Month != "(Missing)") %>%
+  arrange(Month)
+```  
+
+```{r date_plot}
+ggplot(date_dat, aes(x=Month, y=Count)) + 
+  geom_bar(stat="identity", fill = "darkslategray4", width = 0.5) +
+  scale_y_continuous(expand = c(0, 0)) +
+  ylab(paste0("Total number of ", species_plural)) + 
+  xlab("Month (2019)") +
+  theme_classic() +
+  theme(axis.text = element_text(size = 11))
+```
+    
+# Observations by Time of Day  
+Timing of night, day, and twilight (nautical-civil) based on data from Challis, ID (approximate geographic center of state) on August 15, 2019 (median date of camera deployment)  
+  
+  
+``` {r time_date}
+# Based on sunrise/sunset data from Challis, ID (middle of state) on August 15, 2019 (median date)
+time_dat <- species_2019 %>%
+  mutate(Hour = hour(lubridate::hms(as.character(Time)))) %>%
+  group_by(Hour, Pic_CamID, by10 = cut.POSIXt(posix_date_time, "10 min")) %>%
+  summarise(Max_Count = max(NearSp1Count, na.rm = T)) %>%
+  mutate(Count = ifelse(Max_Count == -Inf, 0, Max_Count)) %>%
+  group_by(Hour) %>%
+  summarise(Count = sum(Count, na.rm = T))
+
+if(max(time_dat$Count) > 10){
+  timeofday <- data.frame(
+  id = rep(c("Night","Twilight","Day","Twilight","Night"),each = 4),
+  x = c(-1, -1, 5.5, 5.5, # night
+        5.5, 5.5, 6.7, 6.7, # nautical twilight
+        6.7, 6.7, 20.9, 20.9, # day
+        20.9, 20.9, 21.9, 21.9, # nautical twilight
+        21.9, 21.9, 24, 24 # night
+        ),
+  y = c(0, max(time_dat$Count, na.rm = T) + 1, max(time_dat$Count, na.rm = T) + 1, 0, # night
+        0, max(time_dat$Count, na.rm = T) + 1, max(time_dat$Count, na.rm = T) + 1, 0, # nautical twilight
+        0, max(time_dat$Count, na.rm = T) + 1, max(time_dat$Count, na.rm = T) + 1, 0, # day
+        0, max(time_dat$Count, na.rm = T) + 1, max(time_dat$Count, na.rm = T) + 1, 0, # nautical twilight
+        0, max(time_dat$Count, na.rm = T) + 1, max(time_dat$Count, na.rm = T) + 1, 0 # night
+        )
+  )
+} else {
+  timeofday <- data.frame(
+  id = rep(c("Night","Twilight","Day","Twilight","Night"),each = 4),
+  x = c(-1, -1, 5.5, 5.5, # night
+        5.5, 5.5, 6.7, 6.7, # nautical twilight
+        6.7, 6.7, 20.9, 20.9, # day
+        20.9, 20.9, 21.9, 21.9, # nautical twilight
+        21.9, 21.9, 24, 24 # night
+        ),
+  y = c(0, max(time_dat$Count, na.rm = T) + 0.25, max(time_dat$Count, na.rm = T) + 0.25, 0, # night
+        0, max(time_dat$Count, na.rm = T) + 0.25, max(time_dat$Count, na.rm = T) + 0.25, 0, # twilight
+        0, max(time_dat$Count, na.rm = T) + 0.25, max(time_dat$Count, na.rm = T) + 0.25, 0, # day
+        0, max(time_dat$Count, na.rm = T) + 0.25, max(time_dat$Count, na.rm = T) + 0.25, 0, # twilight
+        0, max(time_dat$Count, na.rm = T) + 0.25, max(time_dat$Count, na.rm = T) + 0.25, 0 # night
+        )
+)
+}
+timeofday$id <- factor(timeofday$id, levels = c("Day","Twilight","Night"))
+
+hour_list <- c(1:23)
+
+for(i in 1:23){
+  if(!hour_list[i] %in% time_dat$Hour){
+    time_dat <- add_row(time_dat, Hour = hour_list[i], Count = 0) %>%
+      arrange(Hour)
+  }
+}
+```
+
+```{r time_plot}
+t <- ggplot(time_dat, aes(x=Hour, y=Count)) + 
+        geom_bar(stat="identity", width = 0.5) +
+        scale_x_continuous(breaks = seq(0,23, by = 2), expand = c(0,0)) +
+        ylab(paste0("Total number of ", species_plural)) + 
+  xlab("Hour of Day") +
+        geom_polygon(data = timeofday, aes(x = x, y = y, fill = id),
+                     alpha = 0.6) +
+        scale_fill_manual(values = c("lightskyblue1","lightskyblue3","lightskyblue4")) +
+        theme_classic() +
+        theme(legend.title = element_blank(),
+              axis.text = element_text(size = 11))
+        
+
+if(max(time_dat$Count) > 5){
+  t  +
+        scale_y_continuous(expand = c(0, 0), 
+                           breaks = seq(0,max(time_dat$Count, na.rm = T),
+                                        round(max(time_dat$Count, na.rm = T)/5,0)))
+} else {
+  t  +
+        scale_y_continuous(expand = c(0, 0), 
+                           breaks = seq(0,max(time_dat$Count, na.rm = T), 
+                                        1))
+}
+
+        
+```
+
+\newpage
+
+# Observations by Habitat
+Qualitative habitat data collected by camera deployers. Labels above the bars indicate number of cameras that observed `r species_plural` out of total number of cameras within a given habitat type[^1]  
+  
+  
+``` {r habitat_data, fig.height=6, fig.width=10}
+avail_hab <- deploy_dat %>%
+  mutate(Habitat = forcats::fct_explicit_na(DominantHabitatType)) %>%
+  group_by(Habitat) %>%
+  summarise(Total_Cams = n())
+
+hab_sp <- species_2019 %>%
+  mutate(Habitat = forcats::fct_explicit_na(DominantHabitatType)) %>%
+  group_by(Habitat, Pic_CamID) %>%
+  summarise(count = n()) %>%
+  group_by(Habitat) %>%
+  summarise(With_Species = n())
+
+hab_prop <- left_join(avail_hab,hab_sp, "Habitat") %>%
+  mutate(Habitat = factor(Habitat, levels = c("Grassland/Meadow","Riparian", "Aspen", "Juniper",
+                                              "Mountain shrub", "Wet forest", "Dry forest", 
+                                              "Sagebrush-steppe", "Other", "(Missing)")))%>%
+  filter(Habitat != "(Missing)") %>%
+  mutate(With_Species = ifelse(is.na(With_Species),0,With_Species)) %>%
+  mutate(Proportion_With_Species = With_Species/Total_Cams) %>%
+  mutate(Proportion_With_Species = ifelse(Proportion_With_Species == -Inf, 0, Proportion_With_Species))
+```
+
+```{r habitat_plot}
+h <- ggplot(hab_prop, aes(x=Habitat, y=Proportion_With_Species)) + 
+  geom_bar(stat="identity", fill = "darkseagreen", width = 0.5) +
+  scale_y_continuous(expand = expand_scale(mult = c(0,0.1))) +
+  ylab(paste0("Proportion of cameras with ", species_plural)) + xlab("Habitat") +
+  theme_classic() +
+  theme(axis.text = element_text(size = 11),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+if(max(hab_prop$Proportion_With_Species) > 0.1){
+  h + geom_text(aes(label = paste0(With_Species,"/",Total_Cams),
+                y = Proportion_With_Species + 0.008),
+            vjust = 0)
+} else if(max(hab_prop$Proportion_With_Species) > 0.03){
+  h + geom_text(aes(label = paste0(With_Species,"/",Total_Cams),
+                y = Proportion_With_Species + 0.003),
+            vjust = 0)
+} else {
+  h + geom_text(aes(label = paste0(With_Species,"/",Total_Cams),
+                y = Proportion_With_Species + 0.0003),
+            vjust = 0)
+}
+
+```
+
+\newpage
+
+# Observations by Trail Type
+Qualitative trail data collected by camera deployers. Labels above the bars indicate number of cameras that observed `r species_plural` out of total number of cameras facing a given trail type[^2] 
+  
+  
+``` {r trail_data, fig.height = 6}
+avail_trail <- deploy_dat %>%
+  mutate(Trail = forcats::fct_explicit_na(CameraFacing)) %>%
+  group_by(Trail) %>%
+  summarise(Total_Cams = n())
+
+trail_sp <- species_2019 %>%
+  mutate(Trail = forcats::fct_explicit_na(CameraFacing)) %>%
+  group_by(Trail, Pic_CamID) %>%
+  summarise(count = n()) %>%
+  group_by(Trail) %>%
+  summarise(With_Species = n())
+
+trail_prop <- left_join(avail_trail, trail_sp, "Trail") %>%
+  mutate(Trail = factor(Trail, levels = c("Game trail","Established hiking trail", 
+                                              "ATV trail", "Lightly used dirt road",
+                                              "Other", "(Missing)")))%>%
+  filter(Trail != "(Missing)") %>%
+  mutate(With_Species = ifelse(is.na(With_Species),0,With_Species)) %>%
+  mutate(Proportion_With_Species = With_Species/Total_Cams) %>%
+  mutate(Proportion_With_Species = ifelse(Proportion_With_Species == -Inf, 0, Proportion_With_Species))
+```
+```{r trail_plot}
+tp <- ggplot(trail_prop, aes(x=Trail, y=Proportion_With_Species)) + 
+  geom_bar(stat="identity", fill = "darkseagreen4", width = 0.5) +
+  scale_y_continuous(expand = expand_scale(mult = c(0,0.1))) +
+  ylab(paste0("Proportion of cameras with ", species_plural)) + xlab("Trail type") +
+  theme_classic() +
+  theme(axis.text = element_text(size = 11))
+
+if(max(trail_prop$Proportion_With_Species) > 0.1){
+  tp + geom_text(aes(label = paste0(With_Species,"/",Total_Cams),
+                y = Proportion_With_Species + 0.008),
+            vjust = 0)
+} else if(max(trail_prop$Proportion_With_Species) > 0.05){
+  tp + geom_text(aes(label = paste0(With_Species,"/",Total_Cams),
+                y = Proportion_With_Species + 0.003),
+            vjust = 0)
+} else {
+  tp + geom_text(aes(label = paste0(With_Species,"/",Total_Cams),
+                y = Proportion_With_Species + 0.0003),
+            vjust = 0)
+}
+
+```
+[^1]:All cameras with habitat data included, not accounting for camera issues (e.g., high motion trigger sensitivity, short battery life, SD card malfunction, etc.)
+[^2]:All cameras with trail data included, not accounting for camera issues (e.g., high motion trigger sensitivity, short battery life, SD card malfunction, etc.)       
